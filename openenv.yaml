@@ -1,0 +1,32 @@
+id: openincident-v1
+
+description: >
+  Multi-agent incident response environment where an AI agent learns to resolve system outages.
+
+observation_space:
+  cpu_usage:
+    type: float
+    range: [0, 100]
+  latency:
+    type: float
+    range: [0, 2000]
+  service_health:
+    type: categorical
+    values: ["healthy", "degraded", "down"]
+
+action_space:
+  - restart_service
+  - scale_resources
+  - do_nothing
+
+tasks:
+  easy:
+    description: Single service outage
+  medium:
+    description: CPU + latency issue
+  hard:
+    description: cascading failure
+
+reward:
+  description: >
+    Reward based on recovery speed and correctness of actions.
