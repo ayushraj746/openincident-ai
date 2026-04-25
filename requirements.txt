@@ -1,0 +1,10 @@
+gymnasium
+numpy
+stable-baselines3
+torch
+streamlit
+fastapi
+uvicorn
+pydantic
+matplotlib
+pyyaml

@@ -2,68 +2,90 @@ from stable_baselines3 import PPO
 from env.gym_wrapper import GymOpenIncidentEnv
 import numpy as np
 
-env = GymOpenIncidentEnv()
-model = PPO.load("ppo_incident_model")
 
-num_episodes = 20
+def evaluate_rl_model(
+    model_path: str = "ppo_incident_model.zip",
+    num_episodes: int = 20,
+    difficulty: str = "medium",
+    verbose: bool = True,
+):
+    """
+    Evaluate trained RL model safely (non-breaking upgrade)
 
-all_rewards = []
-all_steps = []
+    Returns:
+        dict:
+            avg_reward
+            avg_steps
+            success_rate
+    """
 
-print("\n===== RAW EPISODE RESULTS =====\n")
+    # 🔥 Safe env init (eval mode ensures consistent scenario)
+    env = GymOpenIncidentEnv(difficulty=difficulty, eval_mode=True)
 
-for ep in range(num_episodes):
-    obs, _ = env.reset()
-    total_reward = 0
-    steps = 0
+    # 🔥 Safe model loading (handles .zip automatically)
+    model = PPO.load(model_path)
 
-    while True:
-        action, _ = model.predict(obs)
-        action = int(action)
+    all_rewards = []
+    all_steps = []
+    successes = 0
 
-        obs, reward, done, _, _ = env.step(action)
+    if verbose:
+        print("\n===== RAW EPISODE RESULTS =====\n")
 
-        total_reward += reward
-        steps += 1
+    for ep in range(num_episodes):
+        obs, _ = env.reset()
+        total_reward = 0
+        steps = 0
 
-        if done:
-            break
+        while True:
+            action, _ = model.predict(obs, deterministic=True)
+            action = int(action)
 
-    all_rewards.append(total_reward)
-    all_steps.append(steps)
+            obs, reward, done, _, _ = env.step(action)
 
-    print(f"Episode {ep+1}: Reward={total_reward:.2f}, Steps={steps}")
+            total_reward += reward
+            steps += 1
 
-# ---------------- FILTER LOGIC ---------------- #
+            if done:
+                break
 
-valid_rewards = []
-valid_steps = []
+        all_rewards.append(total_reward)
+        all_steps.append(steps)
 
-for r, s in zip(all_rewards, all_steps):
-    if s <= 15:   # 🔥 remove unstable long episodes
-        valid_rewards.append(r)
-        valid_steps.append(s)
+        # 🔥 Success condition (episode finished before max steps)
+        if steps < env.env.max_steps:
+            successes += 1
 
-# ---------------- SUMMARY ---------------- #
+        if verbose:
+            print(f"Episode {ep+1}: Reward={total_reward:.2f}, Steps={steps}")
 
-print("\n===== OVERALL SUMMARY =====")
-print(f"Avg Reward (All): {np.mean(all_rewards):.2f}")
-print(f"Avg Steps  (All): {np.mean(all_steps):.2f}")
+    # ---------------- FINAL METRICS ---------------- #
 
-print("\n===== FILTERED SUMMARY (STABLE EPISODES) =====")
+    avg_reward = float(np.mean(all_rewards))
+    avg_steps = float(np.mean(all_steps))
+    success_rate = float(successes / num_episodes)
 
-if len(valid_rewards) > 0:
-    print(f"Avg Reward (Filtered): {np.mean(valid_rewards):.2f}")
-    print(f"Avg Steps  (Filtered): {np.mean(valid_steps):.2f}")
-    print(f"Episodes Used: {len(valid_rewards)}/{num_episodes}")
-else:
-    print("No valid episodes after filtering!")
+    if verbose:
+        print("\n===== RL SUMMARY =====")
+        print(f"Avg Reward   : {avg_reward:.2f}")
+        print(f"Avg Steps    : {avg_steps:.2f}")
+        print(f"Success Rate : {success_rate*100:.1f}%")
 
-# ---------------- BEST EPISODE ---------------- #
+        # Best episode info (kept from your version ✔️)
+        best_idx = int(np.argmax(all_rewards))
+        print("\n===== BEST EPISODE =====")
+        print(f"Episode: {best_idx + 1}")
+        print(f"Reward : {all_rewards[best_idx]:.2f}")
+        print(f"Steps  : {all_steps[best_idx]}")
 
-best_idx = np.argmax(all_rewards)
+    return {
+        "avg_reward": avg_reward,
+        "avg_steps": avg_steps,
+        "success_rate": success_rate,
+    }
 
-print("\n===== BEST EPISODE =====")
-print(f"Episode: {best_idx + 1}")
-print(f"Reward: {all_rewards[best_idx]:.2f}")
-print(f"Steps : {all_steps[best_idx]}")
+
+# ---------------- CLI RUN (SAFE) ---------------- #
+
+if __name__ == "__main__":
+    evaluate_rl_model()

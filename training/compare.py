@@ -3,20 +3,20 @@ from agents.commander import IncidentCommander
 from agents.sre_agent import SREAgent
 from agents.support_agent import SupportAgent
 
-from stable_baselines3 import PPO
-from env.gym_wrapper import GymOpenIncidentEnv
+from training.evaluate_rl import evaluate_rl_model
+
 import numpy as np
 
 NUM_EPISODES = 20
 
 
 # -------- RULE BASED -------- #
-def run_rule_based():
+def evaluate_rule_based(num_episodes=20):
     rewards = []
     steps_list = []
+    successes = 0
 
-    for _ in range(NUM_EPISODES):
-        # 🔥 FIX: eval_mode=True for fair comparison
+    for _ in range(num_episodes):
         env = OpenIncidentEnv(eval_mode=True)
 
         commander = IncidentCommander()
@@ -30,12 +30,12 @@ def run_rule_based():
         done = False
 
         while not done:
-            agent_name, action = commander.decide(state)
+            agent_name, action, _ = commander.decide(state)
 
             if agent_name == "sre":
-                action = sre.execute(action)
+                action = sre.execute(action, state)["action"]
             elif agent_name == "support":
-                action = support.execute(action)
+                action = support.execute(action, state)["action"]
 
             state, reward, done, _ = env.step(action)
 
@@ -45,73 +45,50 @@ def run_rule_based():
         rewards.append(total_reward)
         steps_list.append(steps)
 
-    return rewards, steps_list
+        # success condition
+        if steps < env.max_steps:
+            successes += 1
+
+    return {
+        "avg_reward": float(np.mean(rewards)),
+        "avg_steps": float(np.mean(steps_list)),
+        "success_rate": float(successes / num_episodes),
+    }
 
 
-# -------- RL -------- #
-def run_rl():
-    # 🔥 FIX: eval_mode=True
-    env = GymOpenIncidentEnv(eval_mode=True)
-    model = PPO.load("ppo_incident_model")
+# -------- RUN COMPARISON -------- #
 
-    rewards = []
-    steps_list = []
+rule_results = evaluate_rule_based(NUM_EPISODES)
 
-    for _ in range(NUM_EPISODES):
-        obs, _ = env.reset()
-        total_reward = 0
-        steps = 0
-
-        while True:
-            action, _ = model.predict(obs)
-            action = int(action)
-
-            obs, reward, done, _, _ = env.step(action)
-
-            total_reward += reward
-            steps += 1
-
-            if done:
-                break
-
-        rewards.append(total_reward)
-        steps_list.append(steps)
-
-    return rewards, steps_list
+rl_results = evaluate_rl_model(
+    model_path="ppo_incident_model.zip",
+    num_episodes=NUM_EPISODES,
+    verbose=False,
+)
 
 
-# -------- FILTER -------- #
-def filter_data(rewards, steps):
-    filtered_r = []
-    filtered_s = []
+# -------- PRINT RESULTS -------- #
 
-    for r, s in zip(rewards, steps):
-        if 3 <= s <= 15:   # 🔥 better filtering (ignore too short + too long)
-            filtered_r.append(r)
-            filtered_s.append(s)
+print("\n===== FINAL COMPARISON =====\n")
 
-    return filtered_r, filtered_s
+print("---- Rule-Based System ----")
+print(f"Avg Reward   : {rule_results['avg_reward']:.2f}")
+print(f"Avg Steps    : {rule_results['avg_steps']:.2f}")
+print(f"Success Rate : {rule_results['success_rate']*100:.1f}%")
 
+print("\n---- RL Agent ----")
+print(f"Avg Reward   : {rl_results['avg_reward']:.2f}")
+print(f"Avg Steps    : {rl_results['avg_steps']:.2f}")
+print(f"Success Rate : {rl_results['success_rate']*100:.1f}%")
 
-# -------- RUN -------- #
+# -------- IMPROVEMENT SUMMARY -------- #
 
-rule_rewards, rule_steps = run_rule_based()
-rl_rewards, rl_steps = run_rl()
+print("\n===== IMPROVEMENT SUMMARY =====\n")
 
-rule_rewards_f, rule_steps_f = filter_data(rule_rewards, rule_steps)
-rl_rewards_f, rl_steps_f = filter_data(rl_rewards, rl_steps)
+reward_diff = rl_results["avg_reward"] - rule_results["avg_reward"]
+steps_diff = rule_results["avg_steps"] - rl_results["avg_steps"]
+success_diff = rl_results["success_rate"] - rule_results["success_rate"]
 
-
-print("\n===== FINAL COMPARISON (FILTERED) =====")
-
-print(f"Rule-Based → Reward: {np.mean(rule_rewards_f):.2f}, Steps: {np.mean(rule_steps_f):.2f}")
-print(f"RL Agent   → Reward: {np.mean(rl_rewards_f):.2f}, Steps: {np.mean(rl_steps_f):.2f}")
-
-
-# -------- EXTRA DEBUG (VERY HELPFUL) -------- #
-
-print("\n===== RAW STATS =====")
-print(f"Rule Avg Steps (All): {np.mean(rule_steps):.2f}")
-print(f"RL Avg Steps (All):   {np.mean(rl_steps):.2f}")
-
-print(f"Valid Episodes Used: Rule={len(rule_steps_f)}, RL={len(rl_steps_f)}")
+print(f"Reward Change   : {reward_diff:+.2f}")
+print(f"Steps Change    : {steps_diff:+.2f} (positive = RL faster)")
+print(f"Success Change  : {success_diff*100:+.1f}%")
