@@ -4,17 +4,11 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Virtual env
+# Virtual environment (ONLY this)
 venv/
-env/
 
 # Streamlit
 .streamlit/
-
-# Model files (optional)
-*.zip
-*.pt
-*.pth
 
 # OS files
 .DS_Store
@@ -26,8 +20,5 @@ Thumbs.db
 # VS Code
 .vscode/
 
-# Python cache
+# Cache
 *.cache
-
-# RL models (optional)
-ppo_incident_model*
