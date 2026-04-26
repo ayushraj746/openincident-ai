@@ -19,35 +19,47 @@ class OpenIncidentEnv:
 
         self.reward_engine = RewardEngine()
 
+    # ---------------- SAFE VALUE ---------------- #
+
+    def _safe(self, val, default):
+        return val if val is not None else default
+
     # ---------------- OBSERVATION ---------------- #
 
     def _get_observation(self):
-        cpu = self.state.cpu_usage + random.uniform(-3, 3)
-        latency = self.state.latency + random.uniform(-50, 50)
-        memory = self.state.memory_usage + random.uniform(-5, 5)
 
-        # 🔥 never hide network (critical signal)
-        network = self.state.network_status
+        # base values
+        cpu = self._safe(self.state.cpu_usage, 50)
+        latency = self._safe(self.state.latency, 500)
+        memory = self._safe(self.state.memory_usage, 50)
 
-        # partial observability
+        # add noise
+        cpu += random.uniform(-3, 3)
+        latency += random.uniform(-50, 50)
+        memory += random.uniform(-5, 5)
+
+        network = self._safe(self.state.network_status, "normal")
+
+        # 🔥 PARTIAL OBSERVABILITY (SAFE VERSION)
         if random.random() < 0.1:
-            cpu = None
+            cpu = 50
         if random.random() < 0.1:
-            latency = None
+            latency = 500
         if random.random() < 0.1:
-            memory = None
+            memory = 50
 
         obs = {
             "cpu_usage": cpu,
             "latency": latency,
-            "service_health": self.state.service_health,
+            "service_health": self._safe(self.state.service_health, "degraded"),
             "memory_usage": memory,
             "network_status": network,
             "severity": getattr(self.state, "severity", "low"),
             "available_agents": getattr(self.state, "available_agents", []),
         }
 
-        # schema drift simulation
+        # ---------------- SCHEMA DRIFT ---------------- #
+
         if random.random() < 0.2:
             obs = {
                 "metrics": {
@@ -90,6 +102,7 @@ class OpenIncidentEnv:
     # ---------------- STEP ---------------- #
 
     def step(self, action: str) -> Tuple[dict, float, bool, dict]:
+
         self.steps += 1
         self.state.step_count += 1
 
@@ -117,7 +130,6 @@ class OpenIncidentEnv:
             self.state.memory_usage *= 0.6
             self.state.latency *= 0.7
 
-        # service fix depends on network
         if action == "restart_service":
             if self.state.network_status == "normal":
                 self.state.service_health = "healthy"
@@ -143,7 +155,6 @@ class OpenIncidentEnv:
         if random.random() < 0.1:
             self.state.latency += random.randint(80, 200)
 
-        # safe network drift (no infinite loop)
         if random.random() < 0.05:
             if self.state.network_status == "normal":
                 self.state.network_status = "slow"
@@ -163,7 +174,7 @@ class OpenIncidentEnv:
         ):
             self.state.service_health = "healthy"
 
-        # ---------------- TERMINATION (IMPROVED) ---------------- #
+        # ---------------- TERMINATION ---------------- #
 
         if (
             self.state.cpu_usage < 65

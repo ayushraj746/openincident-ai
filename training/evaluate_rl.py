@@ -1,91 +1,156 @@
-from stable_baselines3 import PPO
-from env.gym_wrapper import GymOpenIncidentEnv
 import numpy as np
+import matplotlib.pyplot as plt
+from stable_baselines3 import PPO
+
+from env.gym_wrapper import GymOpenIncidentEnv
+from agents.commander import IncidentCommander
 
 
-def evaluate_rl_model(
-    model_path: str = "ppo_incident_model.zip",
-    num_episodes: int = 20,
-    difficulty: str = "medium",
-    verbose: bool = True,
-):
-    """
-    Evaluate trained RL model safely (non-breaking upgrade)
+# ---------------- CORE EVAL FUNCTION ---------------- #
 
-    Returns:
-        dict:
-            avg_reward
-            avg_steps
-            success_rate
-    """
+def run_episode(env, model=None, rule_agent=None):
+    obs, _ = env.reset()
+    raw_state = env.env.state.to_dict()
 
-    # 🔥 Safe env init (eval mode ensures consistent scenario)
-    env = GymOpenIncidentEnv(difficulty=difficulty, eval_mode=True)
+    total_reward = 0
+    steps = 0
 
-    # 🔥 Safe model loading (handles .zip automatically)
-    model = PPO.load(model_path)
+    trajectory = []
 
-    all_rewards = []
-    all_steps = []
-    successes = 0
-
-    if verbose:
-        print("\n===== RAW EPISODE RESULTS =====\n")
-
-    for ep in range(num_episodes):
-        obs, _ = env.reset()
-        total_reward = 0
-        steps = 0
-
-        while True:
+    while True:
+        if model:
             action, _ = model.predict(obs, deterministic=True)
             action = int(action)
+            action_name = env.action_map[action]
 
-            obs, reward, done, _, _ = env.step(action)
+        elif rule_agent:
+            action_name, _ = rule_agent.decide(raw_state)
 
-            total_reward += reward
-            steps += 1
+        else:
+            raise ValueError("No agent provided")
 
-            if done:
-                break
+        # step
+        raw_state, reward, done, info = env.env.step(action_name)
+        obs = env._convert_state(raw_state)
 
-        all_rewards.append(total_reward)
-        all_steps.append(steps)
+        total_reward += reward
+        steps += 1
 
-        # 🔥 Success condition (episode finished before max steps)
-        if steps < env.env.max_steps:
-            successes += 1
+        trajectory.append({
+            "step": steps,
+            "action": action_name,
+            "reward": reward,
+            "cpu": raw_state.get("cpu_usage"),
+            "latency": raw_state.get("latency"),
+        })
 
-        if verbose:
-            print(f"Episode {ep+1}: Reward={total_reward:.2f}, Steps={steps}")
+        if done:
+            break
 
-    # ---------------- FINAL METRICS ---------------- #
-
-    avg_reward = float(np.mean(all_rewards))
-    avg_steps = float(np.mean(all_steps))
-    success_rate = float(successes / num_episodes)
-
-    if verbose:
-        print("\n===== RL SUMMARY =====")
-        print(f"Avg Reward   : {avg_reward:.2f}")
-        print(f"Avg Steps    : {avg_steps:.2f}")
-        print(f"Success Rate : {success_rate*100:.1f}%")
-
-        # Best episode info (kept from your version ✔️)
-        best_idx = int(np.argmax(all_rewards))
-        print("\n===== BEST EPISODE =====")
-        print(f"Episode: {best_idx + 1}")
-        print(f"Reward : {all_rewards[best_idx]:.2f}")
-        print(f"Steps  : {all_steps[best_idx]}")
-
-    return {
-        "avg_reward": avg_reward,
-        "avg_steps": avg_steps,
-        "success_rate": success_rate,
-    }
+    return total_reward, steps, trajectory
 
 
-# ---------------- CLI RUN (SAFE) ---------------- #
+# ---------------- MAIN EVALUATION ---------------- #
+
+def evaluate_model(
+    model_path="models/ppo_incident_model.zip",
+    episodes=30,
+    difficulties=["easy", "medium", "hard"],
+):
+
+    results = {}
+
+    model = PPO.load(model_path)
+    rule_agent = IncidentCommander()
+
+    for diff in difficulties:
+        print(f"\n===== Evaluating Difficulty: {diff.upper()} =====")
+
+        env = GymOpenIncidentEnv(difficulty=diff, eval_mode=True)
+
+        rl_rewards, rl_steps = [], []
+        rule_rewards, rule_steps = [], []
+
+        for _ in range(episodes):
+
+            # RL run
+            r, s, _ = run_episode(env, model=model)
+            rl_rewards.append(r)
+            rl_steps.append(s)
+
+            # Rule run
+            r2, s2, _ = run_episode(env, rule_agent=rule_agent)
+            rule_rewards.append(r2)
+            rule_steps.append(s2)
+
+        # ---------------- METRICS ---------------- #
+
+        results[diff] = {
+            "rl_avg_reward": np.mean(rl_rewards),
+            "rule_avg_reward": np.mean(rule_rewards),
+            "rl_avg_steps": np.mean(rl_steps),
+            "rule_avg_steps": np.mean(rule_steps),
+            "rl_success_rate": np.mean([s < env.env.max_steps for s in rl_steps]),
+            "rule_success_rate": np.mean([s < env.env.max_steps for s in rule_steps]),
+        }
+
+        print("\n--- RL ---")
+        print(f"Reward: {results[diff]['rl_avg_reward']:.2f}")
+        print(f"Steps : {results[diff]['rl_avg_steps']:.2f}")
+        print(f"Success: {results[diff]['rl_success_rate']*100:.1f}%")
+
+        print("\n--- RULE ---")
+        print(f"Reward: {results[diff]['rule_avg_reward']:.2f}")
+        print(f"Steps : {results[diff]['rule_avg_steps']:.2f}")
+        print(f"Success: {results[diff]['rule_success_rate']*100:.1f}%")
+
+    return results
+
+
+# ---------------- VISUALIZATION ---------------- #
+
+def plot_comparison(results):
+    difficulties = list(results.keys())
+
+    rl_rewards = [results[d]["rl_avg_reward"] for d in difficulties]
+    rule_rewards = [results[d]["rule_avg_reward"] for d in difficulties]
+
+    x = np.arange(len(difficulties))
+
+    plt.figure()
+    plt.bar(x - 0.2, rl_rewards, 0.4, label="RL")
+    plt.bar(x + 0.2, rule_rewards, 0.4, label="Rule")
+
+    plt.xticks(x, difficulties)
+    plt.ylabel("Average Reward")
+    plt.title("RL vs Rule-Based Comparison")
+    plt.legend()
+
+    plt.savefig("comparison.png")
+    print("\n📊 Saved: comparison.png")
+
+
+# ---------------- TRAJECTORY DEBUG ---------------- #
+
+def debug_single_episode(model_path="models/ppo_incident_model.zip"):
+    env = GymOpenIncidentEnv(difficulty="hard", eval_mode=True)
+    model = PPO.load(model_path)
+
+    reward, steps, trajectory = run_episode(env, model=model)
+
+    print("\n===== TRAJECTORY =====\n")
+    for t in trajectory:
+        print(
+            f"Step {t['step']}: Action={t['action']} | "
+            f"Reward={t['reward']:.2f} | CPU={t['cpu']:.1f}"
+        )
+
+    print(f"\nTotal Reward: {reward:.2f}, Steps: {steps}")
+
+
+# ---------------- MAIN ---------------- #
 
 if __name__ == "__main__":
-    evaluate_rl_model()
+    results = evaluate_model()
+    plot_comparison(results)
+    debug_single_episode()

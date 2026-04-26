@@ -11,60 +11,60 @@ class GymOpenIncidentEnv(gym.Env):
 
         self.env = OpenIncidentEnv(difficulty=difficulty, eval_mode=eval_mode)
 
-        # Observation space (7 features)
+        # 🔥 EXPANDED OBSERVATION SPACE (NOW 12 FEATURES)
         self.observation_space = spaces.Box(
             low=0.0,
             high=1.0,
-            shape=(7,),
+            shape=(12,),
             dtype=np.float32,
         )
 
-        # Action space (5 actions)
-        self.action_space = spaces.Discrete(5)
+        # 🔥 EXPANDED ACTION SPACE
+        self.action_map = {
+            0: "delegate_sre",
+            1: "delegate_network",
+            2: "delegate_memory",
+            3: "rollback_deployment",
+            4: "restart_service",
+            5: "do_nothing",
+        }
+
+        self.action_space = spaces.Discrete(len(self.action_map))
 
     def reset(self, seed=None, options=None):
         state = self.env.reset()
         return self._convert_state(state), {}
 
     def step(self, action):
+        action_name = self.action_map[action]
 
-        action_map = {
-            0: "delegate_sre",
-            1: "delegate_network",
-            2: "delegate_memory",
-            3: "rollback_deployment",
-            4: "do_nothing",
-        }
+        state, reward, done, info = self.env.step(action_name)
 
-        state, reward, done, _ = self.env.step(action_map[action])
+        return self._convert_state(state), reward, done, False, info
 
-        return self._convert_state(state), reward, done, False, {}
-
-    def _safe_value(self, value, default):
-        """Handles None values safely"""
+    def _safe(self, value, default):
         return value if value is not None else default
 
     def _convert_state(self, state):
 
-        # ---------------- SCHEMA DRIFT HANDLING ---------------- #
+        # ---------------- HANDLE SCHEMA DRIFT ---------------- #
 
         if "metrics" in state:
-            cpu = self._safe_value(state["metrics"].get("processor_load"), 50)
-            latency = self._safe_value(state["metrics"].get("response_time"), 500)
-            memory = self._safe_value(state["system"].get("memory"), 50)
+            cpu = self._safe(state["metrics"].get("processor_load"), 50)
+            latency = self._safe(state["metrics"].get("response_time"), 500)
+            memory = self._safe(state["system"].get("memory"), 50)
 
             network_status = state["system"].get("network", "normal")
             service_health = state["system"].get("service", "degraded")
 
-            # context may be nested
             context = state.get("context", {})
             severity_val = context.get("severity", "low")
             agents = context.get("agents", [])
 
         else:
-            cpu = self._safe_value(state.get("cpu_usage"), 50)
-            latency = self._safe_value(state.get("latency"), 500)
-            memory = self._safe_value(state.get("memory_usage"), 50)
+            cpu = self._safe(state.get("cpu_usage"), 50)
+            latency = self._safe(state.get("latency"), 500)
+            memory = self._safe(state.get("memory_usage"), 50)
 
             network_status = state.get("network_status", "normal")
             service_health = state.get("service_health", "degraded")
@@ -72,14 +72,19 @@ class GymOpenIncidentEnv(gym.Env):
             severity_val = state.get("severity", "low")
             agents = state.get("available_agents", [])
 
-        # ---------------- NEW FEATURES ---------------- #
+        # ---------------- ADVANCED FEATURES ---------------- #
+
+        anomaly = state.get("anomaly_score", 0.0)
+        risk = state.get("failure_risk", 0.0)
+        step = state.get("step_count", 0)
+
+        # agent load approximation
+        agent_load = len(agents)
+
+        # ---------------- ENCODING ---------------- #
 
         severity_map = {"low": 0, "medium": 1, "high": 2}
         severity = severity_map.get(severity_val, 0)
-
-        agent_count = len(agents)
-
-        # ---------------- CATEGORICAL ENCODING ---------------- #
 
         network_map = {"normal": 0, "slow": 1, "down": 2}
         service_map = {"healthy": 2, "degraded": 1, "down": 0}
@@ -92,12 +97,33 @@ class GymOpenIncidentEnv(gym.Env):
         cpu = cpu / 100.0
         latency = latency / 2000.0
         memory = memory / 100.0
+
         network = network / 2.0
         service = service / 2.0
         severity = severity / 2.0
-        agent_count = agent_count / 3.0
+
+        anomaly = anomaly  # already 0–1
+        risk = risk        # already 0–1
+
+        step = min(step / 20.0, 1.0)
+        agent_load = agent_load / 3.0
+
+        # ---------------- FINAL VECTOR ---------------- #
 
         return np.array(
-            [cpu, latency, memory, network, service, severity, agent_count],
+            [
+                cpu,
+                latency,
+                memory,
+                network,
+                service,
+                severity,
+                agent_load,
+                anomaly,
+                risk,
+                step,
+                cpu * risk,        # interaction feature
+                latency * anomaly  # interaction feature
+            ],
             dtype=np.float32,
         )

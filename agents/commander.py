@@ -1,9 +1,14 @@
+from utils.hf_llm import query_llm
+
+
 class IncidentCommander:
-    def __init__(self):
+    def __init__(self, rl_model=None):
         self.history = []
+        self.rl_model = rl_model
+
+    # ---------------- STATE EXTRACTION ---------------- #
 
     def _extract_state(self, state: dict):
-
         if "metrics" in state:
             cpu = state["metrics"].get("processor_load")
             latency = state["metrics"].get("response_time")
@@ -13,7 +18,6 @@ class IncidentCommander:
 
             context = state.get("context", {})
             severity = context.get("severity", "low")
-            agents = context.get("agents", [])
         else:
             cpu = state.get("cpu_usage")
             latency = state.get("latency")
@@ -21,131 +25,110 @@ class IncidentCommander:
             network = state.get("network_status")
             health = state.get("service_health")
             severity = state.get("severity", "low")
-            agents = state.get("available_agents", [])
 
-        cpu = cpu if cpu is not None else 50
-        latency = latency if latency is not None else 500
-        memory = memory if memory is not None else 50
-        network = network if network is not None else "normal"
-        health = health if health is not None else "degraded"
-
-        return cpu, latency, memory, network, health, severity, agents
-
-    def _repeat_penalty(self, action):
-        recent = [h["action"] for h in self.history[-3:]]
-        return recent.count(action)
-
-    def _no_progress(self, state):
-        if len(self.history) < 2:
-            return False
-
-        prev_state = self.history[-1]["state"]
-
-        return (
-            prev_state.get("cpu_usage") == state.get("cpu_usage") and
-            prev_state.get("latency") == state.get("latency") and
-            prev_state.get("memory_usage") == state.get("memory_usage") and
-            prev_state.get("network_status") == state.get("network_status") and
-            prev_state.get("service_health") == state.get("service_health")
-        )
-
-    def decide(self, state: dict):
-
-        cpu, latency, memory, network, health, severity, agents = self._extract_state(state)
-
-        decisions = []
-
-        # ---------------- 🔥 TERMINATION FIRST (VERY IMPORTANT) ---------------- #
-
-        if (
-            cpu < 65
-            and latency < 750
-            and memory < 65
-            and network == "normal"
-            and health == "healthy"
-        ):
-            return "sre", "do_nothing", "System stable — stopping actions"
-
-        # ---------------- ROOT CAUSE FIRST ---------------- #
-
-        if network == "down":
-            decisions.append(("network", "delegate_network", 1.3, "Fixing network first"))
-
-        if cpu > 80:
-            decisions.append(("sre", "delegate_sre", 1.1, f"High CPU: {cpu}%"))
-
-        if memory > 80:
-            decisions.append(("sre", "delegate_memory", 1.0, f"High memory: {memory}%"))
-
-        if latency > 800:
-            decisions.append(("sre", "delegate_sre", 0.95, f"High latency: {latency}ms"))
-
-        # ---------------- FINAL RECOVERY ---------------- #
-
-        if network == "slow":
-            decisions.append(("network", "delegate_network", 1.2, "Stabilizing network"))
-
-        if health == "degraded" and network == "normal":
-            decisions.append(("support", "restart_service", 1.1, "Final service recovery"))
-
-        # ---------------- SERVICE LAST ---------------- #
-
-        if health == "down":
-            base_score = 0.5
-
-            if network == "down":
-                base_score = 0.3
-
-            repeat_count = self._repeat_penalty("restart_service")
-            if repeat_count > 0:
-                base_score *= (1 / (1 + repeat_count))
-
-            decisions.append(("support", "restart_service", base_score, "Service recovery"))
-
-        # ---------------- NO PROGRESS ---------------- #
-
-        if self._no_progress(state):
-            decisions.append(("sre", "delegate_sre", 1.4, "No progress → forcing infra fix"))
-
-        # ---------------- SEVERITY ---------------- #
-
-        severity_weight = {
-            "low": 1.0,
-            "medium": 1.2,
-            "high": 1.5,
+        return {
+            "cpu": cpu or 50,
+            "latency": latency or 500,
+            "memory": memory or 50,
+            "network": network or "normal",
+            "health": health or "degraded",
+            "severity": severity,
         }
 
-        weight = severity_weight.get(severity, 1.0)
+    # ---------------- RULE SAFETY ---------------- #
 
-        updated = []
-        for agent, action, score, reason in decisions:
-            repeat = self._repeat_penalty(action)
-            score = score / (1 + repeat)
-            updated.append((agent, action, score * weight, reason))
+    def _rule_safety(self, state, action):
+        if state["network"] == "down" and action != "delegate_network":
+            return "delegate_network", "Critical fix: network down"
 
-        decisions = updated
+        if state["cpu"] > 90 and action != "delegate_sre":
+            return "delegate_sre", "Critical fix: CPU overload"
 
-        # ---------------- FILTER ---------------- #
+        return action, "Accepted"
 
-        decisions = [d for d in decisions if d[0] in agents or not agents]
+    # ---------------- RL DECISION ---------------- #
 
-        # ---------------- FALLBACK ---------------- #
+    def _rl_decision(self, obs_vector):
+        if self.rl_model is None:
+            return None
 
-        if not decisions:
-            # 🔥 smarter fallback (avoid useless loops)
-            if latency > 700:
-                return "sre", "delegate_sre", "Fallback: latency optimization"
-            return "sre", "do_nothing", "No meaningful action available"
+        action, _ = self.rl_model.predict(obs_vector)
+        return action
 
-        # ---------------- SELECT BEST ---------------- #
+    # ---------------- LLM EXPLANATION ---------------- #
 
-        best = max(decisions, key=lambda x: x[2])
-        agent, action, score, reason = best
+    def _llm_explain(self, state, action):
 
+        # call LLM every 2 steps only (cost control)
+        if len(self.history) % 2 != 0:
+            return f"Rule-based fallback → action={action}"
+
+        prompt = f"""
+        You are an expert Site Reliability Engineer (SRE).
+
+        System State:
+        - CPU Usage: {state['cpu']}%
+        - Latency: {state['latency']} ms
+        - Memory: {state['memory']}%
+        - Network: {state['network']}
+        - Service Health: {state['health']}
+
+        Task:
+        Explain in 1–2 lines WHY action '{action}' is the best decision.
+        Focus on root cause and system stability.
+        """
+
+        try:
+            response = query_llm(prompt)
+
+            # fallback if empty / error
+            if not response or "error" in response.lower():
+                return f"Fallback explanation → action={action}"
+
+            return response.strip()
+
+        except Exception as e:
+            return f"LLM failed → action={action}"
+
+    # ---------------- MAIN DECISION ---------------- #
+
+    def decide(self, state: dict, obs_vector=None):
+
+        extracted = self._extract_state(state)
+
+        # ---------------- RL SUGGESTION ---------------- #
+        rl_action = None
+        if obs_vector is not None:
+            rl_action = self._rl_decision(obs_vector)
+
+        action_map = {
+            0: "delegate_sre",
+            1: "delegate_network",
+            2: "delegate_memory",
+            3: "rollback_deployment",
+            4: "restart_service",
+            5: "do_nothing",
+        }
+
+        if rl_action is not None:
+            action = action_map.get(int(rl_action), "do_nothing")
+        else:
+            action = "do_nothing"
+
+        # ---------------- RULE CORRECTION ---------------- #
+        safe_action, _ = self._rule_safety(extracted, action)
+
+        # ---------------- LLM EXPLANATION ---------------- #
+        explanation = self._llm_explain(extracted, safe_action)
+
+        # 🔥 DEBUG PRINT (VERY IMPORTANT)
+        print(f"🧠 LLM Reason: {explanation}")
+
+        # ---------------- HISTORY ---------------- #
         self.history.append({
             "state": state,
-            "action": action,
-            "reason": reason
+            "action": safe_action,
+            "reason": explanation
         })
 
-        return agent, action, f"{reason} | confidence={round(score, 2)}"
+        return safe_action, explanation

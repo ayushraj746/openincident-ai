@@ -3,96 +3,108 @@ class SupportAgent:
         self.supported_actions = {
             "restart_service",
             "restart_network",
-            "delegate_network",   # 🔥 NEW (VERY IMPORTANT)
+            "delegate_network",
             "do_nothing"
         }
 
-    def _safe_value(self, value, default):
+    def _safe(self, value, default):
         return value if value is not None else default
 
+    # ---------------- EXECUTION ---------------- #
+
     def execute(self, action: str, state: dict):
-        """
-        Executes support-level actions safely
-
-        Returns:
-            {
-                "action": str,
-                "status": "executed" | "skipped",
-                "reason": str
-            }
-        """
-
-        # ---------------- VALIDATION ---------------- #
 
         if action not in self.supported_actions:
-            return {
-                "action": "do_nothing",
-                "status": "skipped",
-                "reason": f"Unsupported action: {action}"
-            }
+            return self._result("do_nothing", "skipped", "Unsupported action")
 
-        # ---------------- STATE EXTRACTION ---------------- #
+        # ---------------- EXTRACT ---------------- #
 
         if "metrics" in state:
-            network = state["system"].get("network", "normal")
-            service = state["system"].get("service", "degraded")
+            network = self._safe(state["system"].get("network"), "normal")
+            service = self._safe(state["system"].get("service"), "degraded")
+            severity = state.get("context", {}).get("severity", "low")
         else:
-            network = state.get("network_status", "normal")
-            service = state.get("service_health", "degraded")
+            network = self._safe(state.get("network_status"), "normal")
+            service = self._safe(state.get("service_health"), "degraded")
+            severity = state.get("severity", "low")
 
-        network = self._safe_value(network, "normal")
-        service = self._safe_value(service, "degraded")
+        # ---------------- DO NOTHING ---------------- #
 
-        # ---------------- INTELLIGENT EXECUTION ---------------- #
+        if action == "do_nothing":
+            return self._result(action, "executed", "No action needed")
 
-        # 🔥 NETWORK HANDLING (CRITICAL FIX)
-        if action == "delegate_network":
-            if network in ["down", "slow"]:
-                return {
-                    "action": "restart_network",
-                    "status": "executed",
-                    "reason": f"Handling network issue ({network}) → restarting network"
-                }
+        # ---------------- SEVERITY MULTIPLIER ---------------- #
+
+        severity_factor = 1.0
+        if severity == "high":
+            severity_factor = 1.5
+        elif severity == "medium":
+            severity_factor = 1.2
+
+        # ---------------- NETWORK HANDLING ---------------- #
+
+        if action in ["delegate_network", "restart_network"]:
+
+            if network == "down":
+                return self._result(
+                    "restart_network",
+                    "success",
+                    "Network recovered (down → slow)"
+                )
+
+            elif network == "slow":
+                return self._result(
+                    "restart_network",
+                    "success",
+                    "Network stabilized (slow → normal)"
+                )
+
             else:
-                return {
-                    "action": "do_nothing",
-                    "status": "skipped",
-                    "reason": "Network is stable, no action needed"
-                }
+                return self._result(
+                    action,
+                    "skipped",
+                    "Network already stable"
+                )
 
-        # Service restart logic
+        # ---------------- SERVICE HANDLING ---------------- #
+
         if action == "restart_service":
+
             if service == "down":
-                return {
-                    "action": action,
-                    "status": "executed",
-                    "reason": "Service is down, restarting service"
-                }
-            else:
-                return {
-                    "action": "do_nothing",
-                    "status": "skipped",
-                    "reason": f"Service not down (current state: {service})"
-                }
+                if network == "normal":
+                    return self._result(
+                        action,
+                        "success",
+                        "Service restarted → healthy"
+                    )
+                else:
+                    return self._result(
+                        action,
+                        "success",
+                        "Service restarted → degraded (network unstable)"
+                    )
 
-        # Direct network restart
-        if action == "restart_network":
-            if network in ["down", "slow"]:
-                return {
-                    "action": action,
-                    "status": "executed",
-                    "reason": f"Network issue detected ({network}), restarting network"
-                }
-            else:
-                return {
-                    "action": "do_nothing",
-                    "status": "skipped",
-                    "reason": "Network already stable"
-                }
+            elif service == "degraded":
+                return self._result(
+                    action,
+                    "success",
+                    "Service recovered → healthy"
+                )
 
-        # Default fallback
+            else:
+                return self._result(
+                    action,
+                    "skipped",
+                    "Service already healthy"
+                )
+
+        return self._result(action, "executed", "No effect")
+
+    # ---------------- RESULT ---------------- #
+
+    def _result(self, action, status, reason):
         return {
-            "action": "do_nothing",
-            "status": "executed",
-            "reason": "No action required"
+            "action": action,
+            "status": status,
+            "reason": reason
         }

@@ -1,0 +1,18 @@
+{
+  "rl": {
+    "avg_reward": 8.917,
+    "avg_steps": 5.67,
+    "success_rate": 1.0,
+    "efficiency": 0.178,
+    "stability": 0.178,
+    "recovery_speed": 1.0
+  },
+  "rule": {
+    "avg_reward": -3.933,
+    "avg_steps": 15.0,
+    "success_rate": 0.333,
+    "efficiency": 0.1,
+    "stability": 0.117,
+    "recovery_speed": 0.333
+  }
+}

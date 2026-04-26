@@ -11,6 +11,7 @@ class RewardEngine:
         current_state: Dict,
         action: str,
         done: bool,
+        info: Dict = None,   # 🔥 NEW (agent feedback)
     ) -> float:
 
         reward = 0.0
@@ -44,98 +45,98 @@ class RewardEngine:
         prev_service = prev_state.get("service_health", "degraded")
         curr_service = current_state.get("service_health", "degraded")
 
-        # ---------------- POSITIVE SIGNALS ---------------- #
+        # ---------------- VERIFIABLE OUTCOME (CORE) ---------------- #
 
-        if curr_cpu < prev_cpu:
-            reward += 0.3 * weight
+        system_improved = (
+            curr_cpu < prev_cpu
+            or curr_latency < prev_latency
+            or curr_memory < prev_memory
+        )
 
-        if curr_latency < prev_latency:
-            reward += 0.3 * weight
+        if system_improved:
+            reward += 0.5 * weight
 
-        if curr_memory < prev_memory:
-            reward += 0.2 * weight
+        # strict success condition (hard check)
+        system_healthy = (
+            curr_cpu < 60
+            and curr_latency < 600
+            and curr_memory < 60
+            and curr_network == "normal"
+            and curr_service == "healthy"
+        )
 
-        # network improvement
+        if system_healthy:
+            reward += 2.0 * weight
+
+        # ---------------- AGENT FEEDBACK (NEW) ---------------- #
+
+        if info:
+            agent_result = info.get("agent_result")
+
+            if agent_result == "success":
+                reward += 0.3
+
+            elif agent_result == "failed":
+                reward -= 0.4
+
+        # ---------------- CRITICAL FIX REWARDS ---------------- #
+
         if prev_network == "down" and curr_network in ["slow", "normal"]:
             reward += 0.6 * weight
-        elif prev_network == "slow" and curr_network == "normal":
-            reward += 0.4 * weight
 
-        # service recovery
         if prev_service != "healthy" and curr_service == "healthy":
             reward += 0.8 * weight
 
-        # ---------------- INTELLIGENT ACTION REWARD ---------------- #
+        # ---------------- WRONG ACTION PENALTY ---------------- #
 
-        if prev_cpu > 80 and action == "delegate_sre":
-            reward += 0.5
-
-        if prev_latency > 800 and action == "delegate_sre":
-            reward += 0.5
-
-        if prev_network == "down" and action in ["delegate_network", "restart_network"]:
-            reward += 0.5
-
-        if prev_memory > 80 and action == "delegate_memory":
-            reward += 0.4
-
-        if prev_service == "down" and action == "restart_service":
-            reward += 0.4
-
-        # ---------------- WRONG ACTION PENALTIES ---------------- #
-
-        if prev_cpu > 80 and action not in ["delegate_sre"]:
+        if prev_cpu > 80 and action != "delegate_sre":
             reward -= 0.3
 
         if prev_network == "down" and action not in ["delegate_network", "restart_network"]:
             reward -= 0.3
 
-        if prev_memory > 80 and action not in ["delegate_memory"]:
+        if prev_memory > 80 and action != "delegate_memory":
             reward -= 0.2
 
-        # ---------------- NEGATIVE SIGNALS ---------------- #
+        # ---------------- ACTION COST (REALISM) ---------------- #
 
-        # repetition penalty
+        action_cost = {
+            "delegate_sre": -0.05,
+            "delegate_memory": -0.04,
+            "delegate_network": -0.05,
+            "restart_service": -0.06,
+            "rollback_deployment": -0.08,
+        }
+
+        reward += action_cost.get(action, 0)
+
+        # ---------------- ANTI-SPAM ---------------- #
+
         if self.last_action == action:
-            reward -= 0.3
+            reward -= 0.2
 
-        # do nothing penalty (stronger)
         if action == "do_nothing" and not done:
+            reward -= 0.4
+
+        # ---------------- NO PROGRESS ---------------- #
+
+        if not system_improved:
             reward -= 0.3
-
-        # no improvement penalty
-        if (
-            curr_cpu >= prev_cpu
-            and curr_latency >= prev_latency
-            and curr_memory >= prev_memory
-        ):
-            reward -= 0.3
-
-        # oscillation penalty
-        if self.last_action and self.last_action != action:
-            reward -= 0.05
-
-        # ---------------- EFFICIENCY BONUS ---------------- #
-
-        # encourage faster stabilization
-        if (
-            curr_cpu < 60
-            and curr_latency < 600
-            and curr_memory < 60
-        ):
-            reward += 0.2
 
         # ---------------- TERMINAL BONUS ---------------- #
 
         if done:
-            if severity == "high":
-                reward += 6.0
-            elif severity == "medium":
-                reward += 4.0
+            if system_healthy:
+                if severity == "high":
+                    reward += 6.0
+                elif severity == "medium":
+                    reward += 4.0
+                else:
+                    reward += 3.0
             else:
-                reward += 3.0
+                reward -= 2.0  # failed episode penalty
 
-        # ---------------- UPDATE MEMORY ---------------- #
+        # ---------------- MEMORY ---------------- #
 
         self.last_action = action
 

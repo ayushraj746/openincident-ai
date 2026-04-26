@@ -5,16 +5,24 @@ import matplotlib.pyplot as plt
 from env.environment import OpenIncidentEnv
 from env.gym_wrapper import GymOpenIncidentEnv
 from stable_baselines3 import PPO
+from agents.commander import IncidentCommander
+from agents.sre_agent import SREAgent
+from agents.support_agent import SupportAgent
+from agents.security_agent import SecurityAgent
 
-st.set_page_config(page_title="OpenIncident AI", layout="wide")
+st.set_page_config(page_title="AutoSRE AI", layout="wide")
 
-st.title("OpenIncident AI Dashboard")
-st.markdown("Autonomous Incident Recovery using Rule-Based and RL Agents")
+st.title("🚀 AutoSRE AI — Incident Response System")
+st.markdown("Real-time Multi-Agent AI for System Recovery")
+
+# ---------------- SIDEBAR ---------------- #
 
 mode = st.sidebar.selectbox(
     "Select Mode",
-    ["Rule-Based", "RL Agent", "Compare Both"]
+    ["Rule-Based", "RL Agent", "Compare"]
 )
+
+speed = st.sidebar.slider("Simulation Speed", 0.1, 1.5, 0.5)
 
 # ---------------- HELPERS ---------------- #
 
@@ -24,164 +32,163 @@ def safe(val, default):
 
 def explain(action):
     mapping = {
-        "restart_service": "Restarting service",
-        "delegate_sre": "Scaling infrastructure",
-        "delegate_memory": "Clearing memory",
-        "delegate_network": "Fixing network",
-        "rollback_deployment": "Rollback deployment",
-        "do_nothing": "System stabilizing",
+        "restart_service": "🔁 Restart Service",
+        "delegate_sre": "⚙️ Scale Infra",
+        "delegate_memory": "🧠 Clear Memory",
+        "delegate_network": "🌐 Fix Network",
+        "rollback_deployment": "⏪ Rollback",
+        "block_traffic": "🚫 Block Traffic",
+        "do_nothing": "⏳ Stabilizing",
     }
     return mapping.get(action, action)
 
 
-def show_status(state):
-    col1, col2, col3, col4, col5 = st.columns(5)
+# ---------------- LIVE PANELS ---------------- #
 
-    col1.metric("CPU", f"{safe(state.get('cpu_usage'),50):.1f}")
-    col2.metric("Latency", f"{safe(state.get('latency'),500):.1f}")
-    col3.metric("Memory", f"{safe(state.get('memory_usage'),50):.1f}")
-    col4.metric("Service", state.get("service_health", "unknown"))
-    col5.metric("Network", state.get("network_status", "unknown"))
+metric_placeholder = st.empty()
+log_placeholder = st.empty()
+chart_placeholder = st.empty()
+
+# ---------------- RULE SIMULATION ---------------- #
+
+def run_rule():
+
+    env = OpenIncidentEnv(eval_mode=True)
+
+    commander = IncidentCommander()
+    sre = SREAgent()
+    support = SupportAgent()
+    security = SecurityAgent()
+
+    state = env.reset()
+
+    logs = []
+    rewards = []
+    cpu_hist = []
+
+    total_reward = 0
+    step = 0
+    done = False
+
+    while not done:
+        step += 1
+
+        action, reason = commander.decide(state)
+
+        # choose agent
+        if "sre" in action:
+            result = sre.execute(action, state)
+        elif "network" in action or "service" in action:
+            result = support.execute(action, state)
+        else:
+            result = security.execute(action, state)
+
+        action = result["action"]
+
+        state, reward, done, info = env.step(action)
+
+        total_reward += reward
+        rewards.append(total_reward)
+        cpu_hist.append(safe(state.get("cpu_usage"),50))
+
+        logs.append(f"{step}: {explain(action)} | r={reward:.2f}")
+
+        # ---------------- LIVE UPDATE ---------------- #
+
+        metric_placeholder.metric("CPU", f"{cpu_hist[-1]:.1f}")
+        log_placeholder.text("\n".join(logs[-8:]))
+
+        fig, ax = plt.subplots()
+        ax.plot(rewards)
+        ax.set_title("Reward Trend")
+        chart_placeholder.pyplot(fig)
+
+        time.sleep(speed)
+
+    return step, total_reward
 
 
-# ---------------- RUN SIMULATION ---------------- #
+# ---------------- RL SIMULATION ---------------- #
 
-if st.button("Run Simulation"):
+def run_rl():
+
+    env = GymOpenIncidentEnv(eval_mode=True)
+    model = PPO.load("models/ppo_incident_model")
+
+    obs, _ = env.reset()
+
+    rewards = []
+    logs = []
+
+    total_reward = 0
+    step = 0
+    done = False
+
+    action_map = env.action_map
+
+    while not done:
+        step += 1
+
+        action, _ = model.predict(obs, deterministic=True)
+        action = int(action)
+
+        obs, reward, done, _, _ = env.step(action)
+
+        total_reward += reward
+        rewards.append(total_reward)
+
+        logs.append(f"{step}: {explain(action_map[action])} | r={reward:.2f}")
+
+        # ---------------- LIVE UPDATE ---------------- #
+
+        metric_placeholder.metric("Reward", f"{total_reward:.2f}")
+        log_placeholder.text("\n".join(logs[-8:]))
+
+        fig, ax = plt.subplots()
+        ax.plot(rewards)
+        ax.set_title("Reward Trend")
+        chart_placeholder.pyplot(fig)
+
+        time.sleep(speed)
+
+    return step, total_reward
+
+
+# ---------------- MAIN ---------------- #
+
+if st.button("▶ Run Simulation"):
 
     st.divider()
 
-    def run_rule():
-        from agents.commander import IncidentCommander
-        from agents.sre_agent import SREAgent
-        from agents.support_agent import SupportAgent
-
-        env = OpenIncidentEnv(eval_mode=True)
-
-        commander = IncidentCommander()
-        sre = SREAgent()
-        support = SupportAgent()
-
-        state = env.reset()
-
-        steps = 0
-        total_reward = 0
-        done = False
-
-        logs = []
-        rewards = []
-        cpu_hist = []
-
-        while not done:
-            steps += 1
-
-            agent, action, _ = commander.decide(state)
-
-            if agent == "sre":
-                result = sre.execute(action, state)
-            else:
-                result = support.execute(action, state)
-
-            action = result["action"]
-
-            state, reward, done, _ = env.step(action)
-
-            total_reward += reward
-            rewards.append(total_reward)
-            cpu_hist.append(safe(state.get("cpu_usage"),50))
-
-            logs.append(f"{steps}: {explain(action)} | r={reward:.2f}")
-
-        return steps, total_reward, logs, rewards, cpu_hist
-
-
-    def run_rl():
-        env = GymOpenIncidentEnv(eval_mode=True)
-        model = PPO.load("ppo_incident_model.zip")
-
-        obs, _ = env.reset()
-
-        steps = 0
-        total_reward = 0
-        done = False
-
-        logs = []
-        rewards = []
-
-        action_map = {
-            0: "delegate_sre",
-            1: "restart_service",
-            2: "delegate_memory",
-            3: "delegate_network",
-            4: "do_nothing",
-        }
-
-        while not done:
-            steps += 1
-
-            action, _ = model.predict(obs, deterministic=True)
-            action = int(action)
-
-            obs, reward, done, _, _ = env.step(action)
-
-            total_reward += reward
-            rewards.append(total_reward)
-
-            logs.append(f"{steps}: {explain(action_map[action])} | r={reward:.2f}")
-
-        return steps, total_reward, logs, rewards
-
-
-    # ---------------- EXECUTION ---------------- #
-
     if mode == "Rule-Based":
-        steps, total_reward, logs, rewards, cpu = run_rule()
+        steps, reward = run_rule()
 
-        st.subheader("Rule-Based Execution")
-
-        st.text("\n".join(logs[-10:]))
-
-        st.success("Recovered")
+        st.success("✅ Recovery Complete")
         st.metric("Steps", steps)
-        st.metric("Total Reward", round(total_reward,2))
-
-        fig, ax = plt.subplots()
-        ax.plot(rewards)
-        ax.set_title("Reward Trend")
-        st.pyplot(fig)
+        st.metric("Total Reward", round(reward, 2))
 
     elif mode == "RL Agent":
-        steps, total_reward, logs, rewards = run_rl()
+        steps, reward = run_rl()
 
-        st.subheader("RL Agent Execution")
-
-        st.text("\n".join(logs[-10:]))
-
-        st.success("Recovered")
+        st.success("🤖 RL Recovery Complete")
         st.metric("Steps", steps)
-        st.metric("Total Reward", round(total_reward,2))
-
-        fig, ax = plt.subplots()
-        ax.plot(rewards)
-        ax.set_title("Reward Trend")
-        st.pyplot(fig)
+        st.metric("Total Reward", round(reward, 2))
 
     else:
-        st.subheader("Comparison Mode")
+        st.subheader("⚔️ RL vs Rule Comparison")
 
-        r_steps, r_reward, _, _, _ = run_rule()
-        rl_steps, rl_reward, _, _ = run_rl()
+        r_steps, r_reward = run_rule()
+        rl_steps, rl_reward = run_rl()
 
         col1, col2 = st.columns(2)
 
-        col1.markdown("### Rule-Based")
-        col1.metric("Steps", r_steps)
-        col1.metric("Reward", round(r_reward,2))
+        col1.metric("Rule Steps", r_steps)
+        col1.metric("Rule Reward", round(r_reward, 2))
 
-        col2.markdown("### RL Agent")
-        col2.metric("Steps", rl_steps)
-        col2.metric("Reward", round(rl_reward,2))
+        col2.metric("RL Steps", rl_steps)
+        col2.metric("RL Reward", round(rl_reward, 2))
 
         if rl_steps < r_steps:
-            st.success("RL is faster")
+            st.success("🚀 RL is faster")
         else:
-            st.warning("Rule-Based is currently better")
+            st.warning("⚠️ Rule-based performed better")

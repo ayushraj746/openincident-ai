@@ -7,95 +7,98 @@ class SecurityAgent:
             "do_nothing"
         }
 
-    def _safe_value(self, value, default):
+    def _safe(self, value, default):
         return value if value is not None else default
 
+    # ---------------- EXECUTION ---------------- #
+
     def execute(self, action: str, state: dict):
-        """
-        Executes security-related actions
-
-        Returns:
-            {
-                "action": str,
-                "status": "executed" | "skipped",
-                "reason": str
-            }
-        """
-
-        # ---------------- VALIDATION ---------------- #
 
         if action not in self.supported_actions:
-            return {
-                "action": "do_nothing",
-                "status": "skipped",
-                "reason": f"Unsupported action: {action}"
-            }
+            return self._result("do_nothing", "skipped", "Unsupported action")
 
-        # ---------------- STATE EXTRACTION ---------------- #
+        # ---------------- EXTRACT ---------------- #
 
         if "metrics" in state:
-            latency = self._safe_value(state["metrics"].get("response_time"), 500)
-            network = state["system"].get("network", "normal")
+            latency = self._safe(state["metrics"].get("response_time"), 500)
+            network = self._safe(state["system"].get("network"), "normal")
         else:
-            latency = self._safe_value(state.get("latency"), 500)
-            network = state.get("network_status", "normal")
+            latency = self._safe(state.get("latency"), 500)
+            network = self._safe(state.get("network_status"), "normal")
 
-        # ---------------- SECURITY DETECTION ---------------- #
+        # ---------------- THREAT DETECTION ---------------- #
 
-        suspicious = False
+        threat = False
 
         if latency > 1200:
-            suspicious = True
+            threat = True
 
         if network == "down":
-            suspicious = True
+            threat = True
 
-        # ---------------- EXECUTION LOGIC ---------------- #
+        # ---------------- DO NOTHING ---------------- #
+
+        if action == "do_nothing":
+            return self._result(action, "executed", "No security action")
+
+        # ---------------- INVESTIGATION ---------------- #
 
         if action == "investigate_security":
-            if suspicious:
-                return {
-                    "action": action,
-                    "status": "executed",
-                    "reason": f"Suspicious activity detected (latency={latency}, network={network})"
-                }
+
+            if threat:
+                return self._result(
+                    action,
+                    "success",
+                    "Threat detected based on latency/network"
+                )
             else:
-                return {
-                    "action": "do_nothing",
-                    "status": "skipped",
-                    "reason": "No suspicious activity detected"
-                }
+                return self._result(
+                    action,
+                    "skipped",
+                    "No threat signals"
+                )
+
+        # ---------------- BLOCK TRAFFIC ---------------- #
 
         if action == "block_traffic":
-            if suspicious:
-                return {
-                    "action": action,
-                    "status": "executed",
-                    "reason": "Blocking suspicious traffic"
-                }
+
+            if threat:
+                return self._result(
+                    action,
+                    "success",
+                    "Traffic blocked to mitigate threat"
+                )
             else:
-                return {
-                    "action": "do_nothing",
-                    "status": "skipped",
-                    "reason": "No need to block traffic"
-                }
+                return self._result(
+                    action,
+                    "skipped",
+                    "No threat to block"
+                )
+
+        # ---------------- RESET CONNECTIONS ---------------- #
 
         if action == "reset_connections":
-            if network in ["down", "slow"]:
-                return {
-                    "action": action,
-                    "status": "executed",
-                    "reason": f"Resetting unstable connections ({network})"
-                }
-            else:
-                return {
-                    "action": "do_nothing",
-                    "status": "skipped",
-                    "reason": "Network stable"
-                }
 
+            if network in ["down", "slow"]:
+                return self._result(
+                    action,
+                    "success",
+                    "Connections reset → network stabilizing"
+                )
+            else:
+                return self._result(
+                    action,
+                    "skipped",
+                    "Network already stable"
+                )
+
+        return self._result(action, "executed", "No effect")
+
+    # ---------------- RESULT ---------------- #
+
+    def _result(self, action, status, reason):
         return {
-            "action": "do_nothing",
-            "status": "executed",
-            "reason": "No action required"
+            "action": action,
+            "status": status,
+            "reason": reason
         }
