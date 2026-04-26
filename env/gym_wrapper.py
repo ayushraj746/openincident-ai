@@ -11,15 +11,15 @@ class GymOpenIncidentEnv(gym.Env):
 
         self.env = OpenIncidentEnv(difficulty=difficulty, eval_mode=eval_mode)
 
-        # 🔥 EXPANDED OBSERVATION SPACE (NOW 12 FEATURES)
+        # ✅ MATCH TRAINING (7 FEATURES ONLY)
         self.observation_space = spaces.Box(
             low=0.0,
             high=1.0,
-            shape=(12,),
+            shape=(7,),
             dtype=np.float32,
         )
 
-        # 🔥 EXPANDED ACTION SPACE
+        # ACTION SPACE
         self.action_map = {
             0: "delegate_sre",
             1: "delegate_network",
@@ -36,7 +36,7 @@ class GymOpenIncidentEnv(gym.Env):
         return self._convert_state(state), {}
 
     def step(self, action):
-        action_name = self.action_map[action]
+        action_name = self.action_map[int(action)]
 
         state, reward, done, info = self.env.step(action_name)
 
@@ -47,7 +47,7 @@ class GymOpenIncidentEnv(gym.Env):
 
     def _convert_state(self, state):
 
-        # ---------------- HANDLE SCHEMA DRIFT ---------------- #
+        # ---------------- HANDLE SCHEMA ---------------- #
 
         if "metrics" in state:
             cpu = self._safe(state["metrics"].get("processor_load"), 50)
@@ -59,7 +59,6 @@ class GymOpenIncidentEnv(gym.Env):
 
             context = state.get("context", {})
             severity_val = context.get("severity", "low")
-            agents = context.get("agents", [])
 
         else:
             cpu = self._safe(state.get("cpu_usage"), 50)
@@ -70,25 +69,14 @@ class GymOpenIncidentEnv(gym.Env):
             service_health = state.get("service_health", "degraded")
 
             severity_val = state.get("severity", "low")
-            agents = state.get("available_agents", [])
-
-        # ---------------- ADVANCED FEATURES ---------------- #
-
-        anomaly = state.get("anomaly_score", 0.0)
-        risk = state.get("failure_risk", 0.0)
-        step = state.get("step_count", 0)
-
-        # agent load approximation
-        agent_load = len(agents)
 
         # ---------------- ENCODING ---------------- #
 
         severity_map = {"low": 0, "medium": 1, "high": 2}
-        severity = severity_map.get(severity_val, 0)
-
         network_map = {"normal": 0, "slow": 1, "down": 2}
         service_map = {"healthy": 2, "degraded": 1, "down": 0}
 
+        severity = severity_map.get(severity_val, 0)
         network = network_map.get(network_status, 0)
         service = service_map.get(service_health, 1)
 
@@ -102,13 +90,7 @@ class GymOpenIncidentEnv(gym.Env):
         service = service / 2.0
         severity = severity / 2.0
 
-        anomaly = anomaly  # already 0–1
-        risk = risk        # already 0–1
-
-        step = min(step / 20.0, 1.0)
-        agent_load = agent_load / 3.0
-
-        # ---------------- FINAL VECTOR ---------------- #
+        # ---------------- FINAL VECTOR (7 FEATURES) ---------------- #
 
         return np.array(
             [
@@ -118,12 +100,7 @@ class GymOpenIncidentEnv(gym.Env):
                 network,
                 service,
                 severity,
-                agent_load,
-                anomaly,
-                risk,
-                step,
-                cpu * risk,        # interaction feature
-                latency * anomaly  # interaction feature
+                cpu * latency,  # interaction (keeps richness)
             ],
             dtype=np.float32,
         )

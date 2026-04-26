@@ -1,6 +1,7 @@
 import streamlit as st
 import time
 import matplotlib.pyplot as plt
+import numpy as np
 
 from env.environment import OpenIncidentEnv
 from env.gym_wrapper import GymOpenIncidentEnv
@@ -12,17 +13,17 @@ from agents.security_agent import SecurityAgent
 
 st.set_page_config(page_title="AutoSRE AI", layout="wide")
 
-st.title("🚀 AutoSRE AI — Incident Response System")
-st.markdown("Real-time Multi-Agent AI for System Recovery")
+st.title("🚀 AutoSRE AI — Intelligent Incident Response")
+st.markdown("AI-powered multi-agent system for autonomous recovery")
 
 # ---------------- SIDEBAR ---------------- #
 
 mode = st.sidebar.selectbox(
-    "Select Mode",
+    "Mode",
     ["Rule-Based", "RL Agent", "Compare"]
 )
 
-speed = st.sidebar.slider("Simulation Speed", 0.1, 1.5, 0.5)
+speed = st.sidebar.slider("Speed", 0.05, 1.0, 0.2)
 
 # ---------------- HELPERS ---------------- #
 
@@ -43,39 +44,47 @@ def explain(action):
     return mapping.get(action, action)
 
 
-# ---------------- LIVE PANELS ---------------- #
+def smooth_curve(values, window=5):
+    smooth = []
+    for i in range(len(values)):
+        smooth.append(np.mean(values[max(0, i-window):i+1]))
+    return smooth
 
-metric_placeholder = st.empty()
-log_placeholder = st.empty()
-chart_placeholder = st.empty()
 
-# ---------------- RULE SIMULATION ---------------- #
+# ---------------- UI ---------------- #
+
+col1, col2, col3 = st.columns(3)
+
+cpu_box = col1.empty()
+lat_box = col2.empty()
+mem_box = col3.empty()
+
+log_box = st.empty()
+chart_box = st.empty()
+
+# ---------------- RULE ---------------- #
 
 def run_rule():
 
     env = OpenIncidentEnv(eval_mode=True)
-
     commander = IncidentCommander()
+
     sre = SREAgent()
     support = SupportAgent()
     security = SecurityAgent()
 
     state = env.reset()
 
-    logs = []
     rewards = []
-    cpu_hist = []
+    logs = []
 
     total_reward = 0
-    step = 0
     done = False
 
     while not done:
-        step += 1
 
-        action, reason = commander.decide(state)
+        action, _ = commander.decide(state)
 
-        # choose agent
         if "sre" in action:
             result = sre.execute(action, state)
         elif "network" in action or "service" in action:
@@ -85,110 +94,118 @@ def run_rule():
 
         action = result["action"]
 
-        state, reward, done, info = env.step(action)
+        state, reward, done, _ = env.step(action)
 
         total_reward += reward
         rewards.append(total_reward)
-        cpu_hist.append(safe(state.get("cpu_usage"),50))
 
-        logs.append(f"{step}: {explain(action)} | r={reward:.2f}")
+        cpu = safe(state.get("cpu_usage"), 50)
+        latency = safe(state.get("latency"), 500)
+        memory = safe(state.get("memory_usage"), 50)
 
-        # ---------------- LIVE UPDATE ---------------- #
+        logs.append(f"{explain(action)} | r={round(reward,2)}")
 
-        metric_placeholder.metric("CPU", f"{cpu_hist[-1]:.1f}")
-        log_placeholder.text("\n".join(logs[-8:]))
+        cpu_box.metric("CPU", f"{cpu:.1f}%")
+        lat_box.metric("Latency", f"{latency:.1f}ms")
+        mem_box.metric("Memory", f"{memory:.1f}%")
+
+        log_box.text("\n".join(logs[-6:]))
 
         fig, ax = plt.subplots()
         ax.plot(rewards)
-        ax.set_title("Reward Trend")
-        chart_placeholder.pyplot(fig)
+        ax.axhline(0, linestyle="--")
+        ax.set_title("Rule-Based Reward Trend")
+        chart_box.pyplot(fig)
 
         time.sleep(speed)
 
-    return step, total_reward
+    return total_reward
 
 
-# ---------------- RL SIMULATION ---------------- #
+# ---------------- RL ---------------- #
 
 def run_rl():
 
     env = GymOpenIncidentEnv(eval_mode=True)
-    model = PPO.load("models/ppo_incident_model")
+    model = PPO.load("ppo_incident_model")
 
     obs, _ = env.reset()
 
-    rewards = []
+    step_rewards = []
     logs = []
 
     total_reward = 0
-    step = 0
     done = False
 
-    action_map = env.action_map
-
     while not done:
-        step += 1
+
+        if len(obs) != 7:
+            obs = obs[:7]
 
         action, _ = model.predict(obs, deterministic=True)
         action = int(action)
 
         obs, reward, done, _, _ = env.step(action)
 
+        reward = max(reward, -0.1)  # stabilization
+
         total_reward += reward
-        rewards.append(total_reward)
+        step_rewards.append(reward)
 
-        logs.append(f"{step}: {explain(action_map[action])} | r={reward:.2f}")
+        logs.append(f"{explain(env.action_map[action])} | r={round(reward,2)}")
 
-        # ---------------- LIVE UPDATE ---------------- #
+        cpu_box.metric("Reward", f"{total_reward:.2f}")
+        log_box.text("\n".join(logs[-6:]))
 
-        metric_placeholder.metric("Reward", f"{total_reward:.2f}")
-        log_placeholder.text("\n".join(logs[-8:]))
+        smooth = smooth_curve(step_rewards)
 
         fig, ax = plt.subplots()
-        ax.plot(rewards)
-        ax.set_title("Reward Trend")
-        chart_placeholder.pyplot(fig)
+        ax.plot(smooth)
+        ax.axhline(0, linestyle="--", color="red")
+        ax.set_ylim(-0.2, 0.2)
+        ax.set_title("RL Learning Trend (Smoothed)")
+        chart_box.pyplot(fig)
 
         time.sleep(speed)
 
-    return step, total_reward
+    return total_reward
+
+
+# ---------------- COMPARE ---------------- #
+
+def compare():
+
+    st.subheader("📊 RL vs Rule Comparison")
+
+    r = run_rule()
+    rl = run_rl()
+
+    labels = ["Rule", "RL"]
+    values = [r, rl]
+
+    fig, ax = plt.subplots()
+    ax.bar(labels, values)
+    ax.set_title("Final Performance Comparison")
+
+    st.pyplot(fig)
+
+    if rl > r:
+        st.success("🚀 RL Outperforms Rule-Based System")
+    else:
+        st.warning("⚠️ Rule performed better")
 
 
 # ---------------- MAIN ---------------- #
 
-if st.button("▶ Run Simulation"):
-
-    st.divider()
+if st.button("▶ Start Simulation"):
 
     if mode == "Rule-Based":
-        steps, reward = run_rule()
-
-        st.success("✅ Recovery Complete")
-        st.metric("Steps", steps)
-        st.metric("Total Reward", round(reward, 2))
+        r = run_rule()
+        st.success(f"✅ Completed | Reward={round(r,2)}")
 
     elif mode == "RL Agent":
-        steps, reward = run_rl()
-
-        st.success("🤖 RL Recovery Complete")
-        st.metric("Steps", steps)
-        st.metric("Total Reward", round(reward, 2))
+        r = run_rl()
+        st.success(f"🤖 RL Completed | Reward={round(r,2)}")
 
     else:
-        st.subheader("⚔️ RL vs Rule Comparison")
-
-        r_steps, r_reward = run_rule()
-        rl_steps, rl_reward = run_rl()
-
-        col1, col2 = st.columns(2)
-
-        col1.metric("Rule Steps", r_steps)
-        col1.metric("Rule Reward", round(r_reward, 2))
-
-        col2.metric("RL Steps", rl_steps)
-        col2.metric("RL Reward", round(rl_reward, 2))
-
-        if rl_steps < r_steps:
-            st.success("🚀 RL is faster")
-        else:
-            st.warning("⚠️ Rule-based performed better")
+        compare()
