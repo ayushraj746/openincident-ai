@@ -1,0 +1,115 @@
+id: openincident-v1
+
+name: OpenIncident
+
+description: >
+  OpenIncident is a multi-agent incident response environment where an AI agent
+  learns to diagnose, prioritize, and resolve system outages under uncertainty.
+  The environment simulates real-world production failures with partial observability,
+  stochastic behavior, and dynamic system conditions.
+
+# ---------------- OBSERVATION SPACE ---------------- #
+
+observation_space:
+  cpu_usage:
+    type: float
+    range: [0, 100]
+    description: Current CPU utilization percentage
+
+  latency:
+    type: float
+    range: [0, 2000]
+    description: Service response time in milliseconds
+
+  memory_usage:
+    type: float
+    range: [0, 100]
+    description: Memory utilization percentage
+
+  network_status:
+    type: categorical
+    values: ["normal", "slow", "down"]
+    description: Current network condition
+
+  service_health:
+    type: categorical
+    values: ["healthy", "degraded", "down"]
+    description: Overall service status
+
+  severity:
+    type: categorical
+    values: ["low", "medium", "high"]
+    description: Incident severity level
+
+  available_agents:
+    type: list
+    description: List of agents available for delegation
+
+# ---------------- ACTION SPACE ---------------- #
+
+action_space:
+  - delegate_sre
+  - delegate_memory
+  - delegate_network
+  - restart_service
+  - rollback_deployment
+  - do_nothing
+
+# ---------------- AGENTS ---------------- #
+
+agents:
+  - name: incident_commander
+    role: decision_maker
+
+  - name: sre_agent
+    role: infrastructure_management
+
+  - name: support_agent
+    role: service_and_network_recovery
+
+# ---------------- TASKS / DIFFICULTY ---------------- #
+
+tasks:
+  easy:
+    description: Single failure (e.g., service down or mild latency spike)
+
+  medium:
+    description: Combined issues (CPU + latency + partial degradation)
+
+  hard:
+    description: Cascading multi-system failure with network disruption
+
+# ---------------- ENVIRONMENT PROPERTIES ---------------- #
+
+environment_properties:
+  partial_observability: true
+  stochastic_transitions: true
+  schema_drift: true
+  multi_step_recovery: true
+
+# ---------------- REWARD ---------------- #
+
+reward:
+  description: >
+    Composite reward based on system recovery, correct action selection,
+    and efficiency. Positive reward for improving system health and resolving
+    incidents quickly. Penalties for repeated, incorrect, or ineffective actions.
+
+  components:
+    - cpu_improvement
+    - latency_reduction
+    - memory_optimization
+    - service_recovery
+    - network_recovery
+    - action_efficiency
+    - repetition_penalty
+
+# ---------------- TERMINATION ---------------- #
+
+termination:
+  success_condition: >
+    System is considered recovered when CPU, latency, and memory are within
+    safe limits and both network and service are in healthy state.
+
+  failure_condition: >
+    Episode ends if maximum steps are reached without recovery.

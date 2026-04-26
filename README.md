@@ -1,331 +1,340 @@
-# OpenIncident
+# OpenIncident — Multi-Agent Incident Response Environment
 
-**A Multi-Agent Reinforcement Learning Environment for Autonomous Incident Response**
+OpenIncident is a simulation environment designed to model real-world infrastructure failures and train intelligent agents to autonomously recover systems using reinforcement learning.
 
----
-
-## 1. Introduction
-
-OpenIncident is a simulation environment designed to model real-world infrastructure failures and train intelligent agents to recover systems automatically.
-
-In real production systems, outages are rarely simple. Engineers deal with incomplete data, conflicting signals, and rapidly changing conditions. OpenIncident tries to capture this complexity in a controlled environment so that AI agents can learn how to respond effectively.
-
-The main idea is not just to “fix systems,” but to study how an agent **makes decisions under uncertainty**.
+The project focuses on decision-making under uncertainty, where agents must act with incomplete information, handle multiple failures, and optimize recovery over time.
 
 ---
 
-## 2. Problem Context
+## 1. Problem
 
-Modern AI systems can perform well on isolated tasks, but they struggle in situations where:
+Modern distributed systems are complex and failure-prone. Issues such as CPU spikes, memory leaks, latency increases, and network disruptions often occur simultaneously and evolve over time.
 
-* information is incomplete or noisy
-* multiple problems happen at the same time
-* actions must be coordinated across different components
-* early wrong decisions can make things worse
+Traditional incident response is:
 
-Incident response in production systems is a good example of this.
+* manual
+* reactive
+* dependent on predefined rules
 
-OpenIncident simulates such scenarios and allows an agent to:
+This approach does not scale well and struggles in unpredictable environments.
 
-* observe system state (partially)
-* take actions
-* receive feedback (reward)
-* learn better strategies over time
+OpenIncident explores whether AI agents can:
+
+* observe partially available system signals
+* take corrective actions
+* learn optimal recovery strategies through interaction
 
 ---
 
-## 3. System Overview
+## 2. Environment Overview
 
-At a high level, the system works like this:
+The environment simulates a production system that evolves step by step.
 
-1. The environment starts in a degraded or failing state
-2. The agent observes the system (with missing or noisy data)
+At each timestep:
+
+1. The system starts in a degraded or failing state
+2. The agent observes the system (with partial information)
 3. The agent selects an action
 4. The environment updates the system
-5. A reward is given based on the outcome
-6. This loop continues until the system recovers or fails
+5. A reward is assigned
+6. The loop continues until recovery or failure
+
+This setup creates a sequential decision-making problem suitable for reinforcement learning.
 
 ---
 
-## 4. Environment Design
-
-The core of the project is the `OpenIncidentEnv`.
+## 3. Environment Design
 
 ### State Variables
 
-The environment simulates key infrastructure signals:
+The environment includes key infrastructure signals:
 
 * CPU usage (0–100)
-* latency (response time in ms)
-* memory usage (0–100)
-* service health (healthy / degraded / down)
-* network status (normal / slow / down)
+* Memory usage (0–100)
+* Latency (ms)
+* Service health (healthy / degraded / down)
+* Network status (normal / slow / down)
+
+The observation is converted into a fixed 7-dimensional vector for RL compatibility.
 
 ---
 
-### Key Features
+### Key Characteristics
 
-#### 1. Partial Observability
+#### Partial Observability
 
-Some values are randomly hidden (set to `None`).
-This forces the agent to act even when it does not have full information.
+Some values may be hidden or missing, forcing the agent to act without complete information.
 
-#### 2. Stochastic Behavior
+#### Stochastic Behavior
 
-The system includes randomness:
+The system evolves with randomness:
 
 * sudden spikes in CPU or latency
-* gradual recovery over time
+* gradual recovery
 
-This prevents the environment from being predictable.
+#### Schema Variations
 
-#### 3. Schema Drift
+State representation may change dynamically, simulating real-world monitoring inconsistencies.
 
-Sometimes the structure of the state changes. For example:
+#### Multi-step Recovery
 
-* `cpu_usage` may appear as `metrics.processor_load`
-* `latency` may appear as `metrics.response_time`
-
-This simulates real-world monitoring systems where data formats can change.
-
-#### 4. Multi-step Recovery
-
-Some problems require multiple steps to fix.
-For example, a network issue may go from:
-
-```
-down → slow → normal
-```
+Certain failures require sequences of actions rather than a single fix.
 
 ---
 
-## 5. Action Space
+## 4. Action Space
 
 The agent can perform actions such as:
 
-* delegate infrastructure fixes (scale resources)
-* clear memory or cache
-* restart service
+* scale infrastructure
+* clear memory/cache
+* restart services
 * restart network
 * rollback deployment
-* do nothing
+* no-op (do nothing)
 
-Each action has a different effect on the system.
+Each action affects the system differently depending on the state.
 
 ---
 
-## 6. Multi-Agent Design
+## 5. Multi-Agent Architecture
 
-Instead of a single monolithic agent, the system uses a **multi-agent structure**.
+The system follows a structured multi-agent design:
 
-### Incident Commander
+### Commander Agent
 
-This is the main decision-making component.
-It:
-
-* analyzes the current state
-* identifies likely root causes
-* chooses which agent should act
-* selects the appropriate action
+* Central decision-maker
+* Chooses actions or delegates tasks
+* Supports both rule-based and RL modes
 
 ### SRE Agent
 
-Handles infrastructure-related tasks such as:
-
-* scaling resources
-* managing memory
-* handling latency issues
+* Handles infrastructure and scaling
+* Optimizes CPU, memory, and latency
 
 ### Support Agent
 
-Handles service-level and network-level recovery:
+* Manages service and network recovery
 
-* restarting services
-* fixing network issues
+### Security Agent
 
-This separation reflects how real incident response teams operate.
+* Handles anomaly detection and mitigation
+
+This structure reflects real-world incident response workflows.
 
 ---
 
-## 7. Reward System
+## 6. Reward System
 
-The reward engine is responsible for guiding learning.
+The reward function guides agent learning.
 
-### Positive Signals
+### Positive Rewards
 
-The agent is rewarded when:
+* reduction in CPU, latency, and memory usage
+* recovery of services
+* network stabilization
 
-* CPU usage decreases
-* latency decreases
-* memory usage improves
-* service becomes healthy
-* network recovers
+### Negative Rewards
 
-### Negative Signals
-
-Penalties are given when:
-
-* the same action is repeated unnecessarily
-* actions do not improve the system
-* wrong actions are taken for a given problem
-* the agent does nothing without reason
+* ineffective or incorrect actions
+* repeated unnecessary actions
+* system degradation
+* inaction when intervention is required
 
 ### Terminal Reward
 
-When the system is fully recovered, a bonus reward is given.
+A bonus reward is given when the system fully recovers.
+
+The reward is step-based, providing continuous feedback during training.
 
 ---
 
-## 8. Reinforcement Learning Setup
+## 7. Reinforcement Learning Setup
 
-The RL agent is trained using **Proximal Policy Optimization (PPO)** from Stable-Baselines3.
+* Algorithm: Proximal Policy Optimization (PPO)
+* Framework: Stable-Baselines3
+* Observation space: 7 features
+* Action space: discrete
 
-### Training Loop
+The agent learns through interaction:
 
-The agent follows this cycle:
-
-```
 observe → act → receive reward → update policy
-```
-
-Over time, it learns which sequences of actions lead to faster recovery.
 
 ---
 
-## 9. Gym Wrapper
+## 8. Gym-Compatible Wrapper
 
-A Gym-compatible wrapper (`GymOpenIncidentEnv`) is used to:
+A Gym-compatible wrapper converts the environment into a format usable by RL libraries.
 
-* convert the environment into numerical observations
-* normalize values (0–1 range)
-* encode categorical variables (network, service health)
+It:
 
-This allows the environment to work with standard RL libraries.
+* normalizes numerical values
+* encodes categorical variables
+* ensures consistent observation shape
 
----
-
-## 10. Evaluation
-
-We evaluate the system using three metrics:
-
-* **Average Reward** → how effective the actions are
-* **Average Steps** → how quickly the system recovers
-* **Success Rate** → how often recovery is achieved
+This enables seamless training and evaluation.
 
 ---
 
-## 11. Rule-Based vs RL Comparison
+## 9. Evaluation
 
-To understand the effectiveness of learning, we compare:
+We evaluate performance using:
+
+* Average Reward
+* Average Steps to Recovery
+* Success Rate
+
+---
+
+## 10. Rule-Based vs RL Comparison
+
+Two approaches are compared:
 
 ### Rule-Based System
 
-Uses fixed logic (if CPU high → scale, etc.)
+Uses predefined logic (e.g., high CPU → scale resources)
 
 ### RL Agent
 
-Learns behavior from experience
+Learns behavior through experience
 
-### Example Result
+### Observations
 
-| Metric       | Rule-Based | RL Agent |
-| ------------ | ---------- | -------- |
-| Avg Reward   | 9.33       | 9.25     |
-| Avg Steps    | 5.20       | 10.50    |
-| Success Rate | 100%       | 90%      |
+* Rule-based system performs well initially
+* RL agent starts weaker but improves with training
+* RL demonstrates more adaptive behavior under uncertainty
 
 ---
 
-### Key Insight
+## 11. Training Results
 
-The rule-based system performs better initially because it uses handcrafted logic.
+The following plot shows reward trends during simulation:
 
-The RL agent performs worse at first, which is expected. This shows that:
+![Reward Graph](assets/reward_graph.png)
 
-* the environment is challenging
-* learning is non-trivial
-* improvement requires more training
+Key observations:
 
-This is a strong indicator that the environment is realistic.
+* RL rewards become more stable over time
+* Fewer extreme failures compared to rule-based behavior
+* Smoother recovery patterns
+
+This indicates that the agent is learning meaningful policies.
 
 ---
 
-## 12. Project Structure
+## 12. Demo
+
+Live interactive demo:
+
+Hugging Face Space:
+(Add link after deployment)
+
+The demo includes:
+
+* rule-based simulation
+* RL-based simulation
+* side-by-side comparison
+* real-time metrics and reward visualization
+
+---
+
+## 13. Project Structure
 
 ```
 openincident/
 │
-├── env/                  # environment logic
-├── agents/               # commander, SRE, support agents
-├── reward/               # reward calculation
-├── training/             # training, evaluation, comparison
-├── inference_engine/     # rule-based execution
-├── analysis/             # optional plotting
-│
-├── OPENINCIDENT/
-│   └── openenv.yaml      # environment metadata
-│
+├── app.py
 ├── requirements.txt
-├── README.md
+│
+├── env/
+├── agents/
+├── reward/
+├── training/
+├── inference_engine/
+│
+├── ppo_incident_model/
 ```
 
 ---
 
-## 13. How to Run
+## 14. How to Run
 
-### Install dependencies
+Install dependencies:
 
 ```
 pip install -r requirements.txt
 ```
 
-### Train RL agent
+Run the application:
 
 ```
-python -m training.train_rl
-```
-
-### Evaluate RL agent
-
-```
-python -m training.evaluate_rl
-```
-
-### Compare RL vs Rule-Based
-
-```
-python -m training.compare
+streamlit run app.py
 ```
 
 ---
 
-## 14. Limitations
+## 15. Training
 
-* RL agent needs more training to outperform rule-based system
-* environment is simulated (not connected to real infrastructure)
-* explainability of decisions is limited
+Training script:
+
+```
+training/train_rl.py
+```
+
+Trained model:
+
+```
+ppo_incident_model/
+```
+
+---
+
+## 16. Key Design Decisions
+
+* fixed observation mismatch (12 → 7 features)
+* step-based reward instead of cumulative reward
+* reward smoothing for stable visualization
+* modular multi-agent architecture
 
 ---
 
-## 15. Future Improvements
+## 17. Limitations
 
-* multi-agent RL (each agent learns independently)
-* integration with real logs and monitoring data
-* better explainability (“why this action was chosen”)
-* distributed incident simulation
+* RL agent requires more training to outperform rule-based logic
+* environment is simulated, not connected to real systems
+* limited explainability of agent decisions
+
+---
+
+## 18. Future Work
+
+* multi-agent reinforcement learning
+* more complex incident scenarios
+* integration with real monitoring data
+* improved interpretability of decisions
 
 ---
 
-## 16. Conclusion
+## 19. Conclusion
 
-OpenIncident is designed as a realistic environment for studying how AI agents handle complex, uncertain situations.
+OpenIncident provides a realistic environment for studying how intelligent agents handle complex system failures.
 
-It shows that:
+It demonstrates that:
 
-* rule-based systems are strong but limited
-* learning-based systems require time but can adapt
-* realistic environments are necessary for meaningful progress
+* rule-based systems are reliable but rigid
+* learning-based systems are adaptive but require training
+* realistic environments are essential for meaningful progress
 
-The focus of this project is not just performance, but creating a **credible training environment for intelligent decision-making systems**.
+The focus is on building a credible training environment for autonomous decision-making systems.
 
 ---
+
+## 20. Additional Resources
+
+* Training script: `training/train_rl.py`
+* Model: `ppo_incident_model/`
+* Demo: (Hugging Face link)
+* Video/Blog: (Add link here)
+
+---
+
