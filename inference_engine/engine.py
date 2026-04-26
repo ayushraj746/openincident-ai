@@ -1,7 +1,6 @@
 import os
 
 from env.environment import OpenIncidentEnv
-from env.gym_wrapper import GymOpenIncidentEnv
 from agents.commander import IncidentCommander
 from agents.sre_agent import SREAgent
 from agents.support_agent import SupportAgent
@@ -12,102 +11,107 @@ from stable_baselines3 import PPO
 
 
 class InferenceEngine:
-    def __init__(self, difficulty: str = "medium", use_rl: bool = False):
+    def __init__(self, difficulty="medium", mode="rule"):
 
-        self.use_rl = use_rl
+        self.mode = mode
         self.model = None
 
-        # ---------------- SAFE RL LOADING ---------------- #
-        if use_rl:
-            model_path = "models/ppo_incident_model.zip"
+        # ---------------- ENV ---------------- #
+        self.env = OpenIncidentEnv(difficulty=difficulty)
 
-            if os.path.exists(model_path):
-                print("✅ RL model loaded")
-                self.env = GymOpenIncidentEnv(difficulty=difficulty, eval_mode=True)
+        # ---------------- RL MODEL ---------------- #
+        if mode == "rl":
+            model_path = "ppo_incident_model"
+
+            try:
                 self.model = PPO.load(model_path)
-            else:
-                print("⚠️ RL model NOT found → fallback to rule-based")
-                self.use_rl = False
-                self.env = OpenIncidentEnv(difficulty=difficulty)
-        else:
-            self.env = OpenIncidentEnv(difficulty=difficulty)
+                print("✅ RL model loaded")
+            except:
+                print("⚠️ RL model not found → fallback to rule-based")
+                self.mode = "rule"
 
         # ---------------- AGENTS ---------------- #
-        self.commander = IncidentCommander()
+        self.commander = IncidentCommander(rl_model=self.model)
         self.sre = SREAgent()
         self.support = SupportAgent()
         self.security = SecurityAgent()
+
+        self.agent_map = {
+            "sre": self.sre,
+            "network": self.support,
+            "support": self.support,
+            "security": self.security,
+        }
 
     # ---------------- AGENT ROUTING ---------------- #
 
     def _route_agent(self, action):
         if "sre" in action:
-            return self.sre
-        elif "network" in action or "service" in action:
-            return self.support
-        elif "security" in action or "block" in action:
-            return self.security
-        return None
+            return "sre"
+        elif "network" in action:
+            return "network"
+        elif "memory" in action:
+            return "sre"
+        elif "security" in action:
+            return "security"
+        return "support"
 
     # ---------------- MAIN RUN ---------------- #
 
-    def run_episode(self, verbose=True, return_trajectory=False):
+    def run_episode(self, verbose=True):
 
         grader = EpisodeGrader()
-        trajectory = []
-
-        if self.use_rl:
-            obs, _ = self.env.reset()
-        else:
-            state = self.env.reset()
-
+        state = self.env.reset()
         done = False
+
         step = 0
 
         while not done:
             step += 1
 
-            # ---------------- RL MODE ---------------- #
-            if self.use_rl and self.model is not None:
+            # ---------------- RL OBS ---------------- #
+            obs_vector = None
+            if self.mode == "rl" and self.model is not None:
+                try:
+                    obs_vector = self.env.get_observation_vector()
+                except:
+                    obs_vector = None
 
-                action_idx, _ = self.model.predict(obs, deterministic=True)
-                action = self.env.action_map[int(action_idx)]
+            # ---------------- COMMANDER ---------------- #
+            action, reason = self.commander.decide(state, obs_vector)
 
-                obs, reward, done, _, _ = self.env.step(action)
+            # ---------------- AGENT ROUTING ---------------- #
+            agent_key = self._route_agent(action)
+            agent = self.agent_map.get(agent_key)
 
-                state_dict = {}
-
-            # ---------------- RULE MODE ---------------- #
+            if agent:
+                execution = agent.execute(action, state)
+                final_action = execution["action"]
             else:
-                action, reason = self.commander.decide(state)
+                execution = {
+                    "action": "do_nothing",
+                    "status": "skipped",
+                    "reason": "Unknown agent",
+                    "impact": {}
+                }
+                final_action = "do_nothing"
 
-                agent = self._route_agent(action)
+            # ---------------- ENV STEP ---------------- #
+            state, reward, done, _ = self.env.step(final_action)
 
-                if agent:
-                    execution = agent.execute(action, state)
-                    final_action = execution["action"]
-                else:
-                    final_action = "do_nothing"
-
-                state, reward, done, _ = self.env.step(final_action)
-
-                state_dict = state
+            # 🔥 APPLY IMPACT
+            if "impact" in execution:
+                state.update(execution["impact"])
 
             # ---------------- GRADER ---------------- #
-            grader.update(reward, state_dict, action, done)
-
-            trajectory.append({
-                "step": step,
-                "action": action,
-                "reward": reward
-            })
+            grader.update(
+                reward=reward,
+                state=state,
+                action=final_action,
+                done=done
+            )
 
             if verbose:
-                print(f"Step {step} | Action={action} | Reward={round(reward,2)}")
+                print(f"Step {step} | Action={final_action} | Reward={round(reward,2)}")
 
-        metrics = grader.get_metrics()
-
-        if return_trajectory:
-            return metrics, trajectory
-
-        return metrics
+        return grader.get_metrics()
