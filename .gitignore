@@ -10,7 +10,66 @@ venv/
 
 # Streamlit
 .streamlit/
+# ---------------- Python ----------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
 
+# ---------------- Virtual Env ----------------
+venv/
+.env
+.env.*
+
+# ---------------- ML / Training ----------------
+models/
+checkpoints/
+logs/
+runs/
+tensorboard/
+*.ckpt
+*.pth
+*.pt
+
+# ---------------- Data ----------------
+data/
+*.csv
+*.jsonl
+*.tsv
+
+# ---------------- Notebook ----------------
+.ipynb_checkpoints/
+
+# ---------------- Results / Outputs ----------------
+results/
+*.json
+*.log
+*.txt
+
+# ---------------- Cache ----------------
+.cache/
+*.cache
+
+# ---------------- OS Files ----------------
+.DS_Store
+Thumbs.db
+
+# ---------------- IDE ----------------
+.vscode/
+.idea/
+
+# ---------------- Streamlit / UI ----------------
+.streamlit/
+
+# ---------------- Misc ----------------
+*.zip
+*.tar
+*.gz
+
+# ---------------- HuggingFace ----------------
+huggingface/
+hf_home/
 # OS files
 .DS_Store
 Thumbs.db
