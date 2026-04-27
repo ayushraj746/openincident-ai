@@ -4,10 +4,8 @@ WORKDIR /app
 
 COPY . .
 
-# Install torch separately (fixes many issues)
-RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --upgrade pip
 
-# Install rest
 RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8501
